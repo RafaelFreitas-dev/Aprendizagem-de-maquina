@@ -11,7 +11,7 @@ from helper_functions import resize_video
 
 # Face recognizer options ->  eigenfaces  |  fisherfaces  |  lbph (recommended for video)
 recognizer = "lbph"
-training_data = "lbph_classifier.yml"  # the path to the .yml file
+training_data = "classificadorLBPHYale.yml"  # the path to the .yml file
 threshold = 10e5   # leave 10e5 if you don't want to specify a threshold. Otherwise, specify the value for threshold
                    # 10e5 = 1000000  (a large number so it will always return a prediction)
 
@@ -56,7 +56,7 @@ def grava(id):
     print(f"Agora: {data_hora_br}")  # Ex: 2025-12-09 10:30:00.123456
     conteudo = data_hora_br  + "-" +id
 
-    with open(nome_arquivo, 'w', encoding='utf-8') as arquivo:
+    with open(nome_arquivo, 'a', encoding='utf-8') as arquivo:
      arquivo.write(conteudo)
     # Você também pode usar um loop para escrever várias linhas
     # for linha in ['Linha 1', 'Linha 2']:
@@ -93,18 +93,24 @@ def recognize_faces(network, face_classifier, orig_frame, face_names, threshold,
 
             cv2.rectangle(frame, (start_x, start_y), (end_x, end_y), (0, 255, 0), 2)
 
-            pred_name = face_names[prediction] if conf <= threshold else "Not identified"
+            # Abaixo o codigo original que você forneceu, comentado, e a linha atualizada que utiliza o método get() do dicionário para evitar KeyError
+            # pred_name = face_names[prediction] if conf <= threshold else "Not identified"
+            pred_name = face_names.get(prediction, "Not identified") if conf <= threshold else "Not identified"
 
-            text = "{} -> {:.4f}".format(pred_name, conf)
+            text = "{} -> {:.2f}".format(pred_name, conf)
             cv2.putText(frame, text, (start_x, start_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
             # face = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
     return frame,text
 
 
-network = cv2.dnn.readNetFromCaffe("ReconhecimentoDeteccao/deploy.prototxt.txt", "ReconhecimentoDeteccao/res10_300x300_ssd_iter_140000.caffemodel")
+network = cv2.dnn.readNetFromCaffe("deploy.prototxt.txt", "res10_300x300_ssd_iter_140000.caffemodel")
 
 # video capture object
 cam = cv2.VideoCapture(0)
+
+if not cam.isOpened():
+    print("Erro: não foi possível acessar a webcam.")
+    sys.exit()
 
 # loop over every frame of the video stream
 while(True):
