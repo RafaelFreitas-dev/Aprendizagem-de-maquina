@@ -1,3 +1,4 @@
+
 import cv2
 import numpy as np
 import os
@@ -5,130 +6,337 @@ import pickle
 import sys
 
 from datetime import datetime
-
-# the same function we've used before
 from helper_functions import resize_video
 
-# Face recognizer options ->  eigenfaces  |  fisherfaces  |  lbph (recommended for video)
+
+# ==========================================
+# CONFIGURACOES
+# ==========================================
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 recognizer = "lbph"
-training_data = "classificadorLBPHYale.yml"  # the path to the .yml file
-threshold = 10e5   # leave 10e5 if you don't want to specify a threshold. Otherwise, specify the value for threshold
-                   # 10e5 = 1000000  (a large number so it will always return a prediction)
 
-max_width = 800           # leave None if you don't want to resize and want to keep the original size of the video stream frame
+training_data = os.path.join(
+    BASE_DIR,
+    "lbph_classifier.yml"
+)
 
-# Function to load the recognizer depending on the chosen option
+CAMINHO_NOMES = os.path.join(
+    BASE_DIR,
+    "face_names.pickle"
+)
+
+threshold = 70
+
+max_width = 800
+
+
+# ==========================================
+# VERIFICAR ARQUIVOS
+# ==========================================
+
+arquivos_necessarios = [
+    training_data,
+    CAMINHO_NOMES,
+    os.path.join(BASE_DIR, "deploy.prototxt.txt"),
+    os.path.join(BASE_DIR, "res10_300x300_ssd_iter_140000.caffemodel")
+]
+
+for arquivo in arquivos_necessarios:
+
+    if not os.path.exists(arquivo):
+        raise FileNotFoundError(
+            f"Arquivo nao encontrado: {arquivo}"
+        )
+
+
+# ==========================================
+# CARREGAR RECONHECEDOR
+# ==========================================
+
 def load_recognizer(option, training_data):
+
+    if not hasattr(cv2, "face"):
+        raise RuntimeError(
+            "Modulo cv2.face nao encontrado. "
+            "Instale opencv-contrib-python."
+        )
+
     if option == "eigenfaces":
         face_classifier = cv2.face.EigenFaceRecognizer_create()
+
     elif option == "fisherfaces":
-        face_classifier = cv2.face.FisherFaceRecognizer_create()J
+        face_classifier = cv2.face.FisherFaceRecognizer_create()
+
     elif option == "lbph":
         face_classifier = cv2.face.LBPHFaceRecognizer_create()
-    else:
-        print("The algorithms available are: Eigenfaces, Fisherfaces and LBPH")
-        sys.exit()
 
-    face_classifier.read(training_data) #.yml
+    else:
+        raise ValueError("Algoritmo de reconhecimento invalido.")
+
+    face_classifier.read(training_data)
+
     return face_classifier
 
-face_classifier = load_recognizer(recognizer, training_data)
 
-# load names from pickle file
-face_names = {}
-with open("face_names.pickle", "rb") as f:
-    original_labels = pickle.load(f)
-    # we invert key and values because it's easier if we access by ID (which is the index)
-    face_names = {v: k for k, v in original_labels.items()}
+face_classifier = load_recognizer(
+    recognizer,
+    training_data
+)
 
-#Arquivo texto : registra identificação
 
-# Abre o arquivo no modo 'w' (write)
-# Se o arquivo não existir, ele será criado. Se existir, seu conteúdo será apagado.
-def grava(id):
-    # Define o nome do arquivo
-    nome_arquivo = 'meuarquivo.txt'
+# ==========================================
+# CARREGAR NOMES
+# ==========================================
 
-    # Data e hora atual
+with open(CAMINHO_NOMES, "rb") as arquivo:
+
+    original_labels = pickle.load(arquivo)
+
+    face_names = {
+        valor: chave
+        for chave, valor in original_labels.items()
+    }
+
+
+# ==========================================
+# REGISTRAR IDENTIFICACAO
+# ==========================================
+
+def grava(nome):
+
+    nome_arquivo = os.path.join(
+        BASE_DIR,
+        "meuarquivo.txt"
+    )
+
     agora = datetime.now()
-    data_hora_br = agora.strftime('%d/%m/%Y %H:%M:%S')
-    print(id)
-    print(f"Agora: {data_hora_br}")  # Ex: 2025-12-09 10:30:00.123456
-    conteudo = data_hora_br  + "-" +id
 
-    with open(nome_arquivo, 'a', encoding='utf-8') as arquivo:
-     arquivo.write(conteudo)
-    # Você também pode usar um loop para escrever várias linhas
-    # for linha in ['Linha 1', 'Linha 2']:
-    #     arquivo.write(linha + '\n')
+    data_hora = agora.strftime(
+        "%d/%m/%Y %H:%M:%S"
+    )
 
-    print(f"Conteúdo gravado em {nome_arquivo}")
+    conteudo = f"{data_hora} - {nome}\n"
 
-# Return the detected face using SSD
-def recognize_faces(network, face_classifier, orig_frame, face_names, threshold, conf_min=0.9):
-    text=''
-    frame = orig_frame.copy()  # to keep the original frame intact (just if we want to save the full image
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    (h, w) = frame.shape[:2]
-    blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 117.0, 123.0))
+    with open(
+        nome_arquivo,
+        "a",
+        encoding="utf-8"
+    ) as arquivo:
+
+        arquivo.write(conteudo)
+
+    print("Identificacao registrada:", conteudo.strip())
+
+
+# ==========================================
+# RECONHECIMENTO FACIAL SSD + LBPH
+# ==========================================
+
+def recognize_faces(
+    network,
+    face_classifier,
+    orig_frame,
+    face_names,
+    threshold,
+    conf_min=0.9
+):
+
+    frame = orig_frame.copy()
+
+    gray = cv2.cvtColor(
+        frame,
+        cv2.COLOR_BGR2GRAY
+    )
+
+    h, w = frame.shape[:2]
+
+    blob = cv2.dnn.blobFromImage(
+        cv2.resize(frame, (300, 300)),
+        1.0,
+        (300, 300),
+        (104.0, 117.0, 123.0)
+    )
+
     network.setInput(blob)
+
     detections = network.forward()
 
-    for i in range(0, detections.shape[2]):
+    nome_identificado = None
+
+    for i in range(detections.shape[2]):
+
         confidence = detections[0, 0, i, 2]
-        if confidence > conf_min:
-            bbox = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-            (start_x, start_y, end_x, end_y) = bbox.astype("int")
 
-            # sometimes if the face is closer to the edge of the capture area the detector can return negative values, and this will crash the execution.
-            # the recommendation is to keep the face on center of the video, but just to guarantee, let's create this condition to prevent the program from crashing
-            if (start_x<0 or start_y<0 or end_x > w or end_y > h):
-                #print(start_y,end_y,start_x,end_x)
-                continue
+        if confidence < conf_min:
+            continue
 
-            face_roi = gray[start_y:end_y,start_x:end_x]
-            face_roi = cv2.resize(face_roi, (90, 120)) ## preferably the same size choosen when training the images (if you're using eigenfaces and fisherfaces it's mandatory that they have the sams size)
+        bbox = detections[0, 0, i, 3:7] * np.array(
+            [w, h, w, h]
+        )
 
-            prediction, conf = face_classifier.predict(face_roi)
+        start_x, start_y, end_x, end_y = bbox.astype("int")
 
-            cv2.rectangle(frame, (start_x, start_y), (end_x, end_y), (0, 255, 0), 2)
+        # Ajustar coordenadas aos limites do frame
+        start_x = max(0, start_x)
+        start_y = max(0, start_y)
+        end_x = min(w, end_x)
+        end_y = min(h, end_y)
 
-            # Abaixo o codigo original que você forneceu, comentado, e a linha atualizada que utiliza o método get() do dicionário para evitar KeyError
-            # pred_name = face_names[prediction] if conf <= threshold else "Not identified"
-            pred_name = face_names.get(prediction, "Not identified") if conf <= threshold else "Not identified"
+        if end_x <= start_x or end_y <= start_y:
+            continue
 
-            text = "{} -> {:.2f}".format(pred_name, conf)
-            cv2.putText(frame, text, (start_x, start_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            # face = cv2.cvtColor(face_roi, cv2.COLOR_BGR2GRAY)
-    return frame,text
+        face_roi = gray[
+            start_y:end_y,
+            start_x:end_x
+        ]
+
+        if face_roi.size == 0:
+            continue
+
+        face_roi = cv2.resize(
+            face_roi,
+            (90, 120)
+        )
+
+        prediction, conf = face_classifier.predict(
+            face_roi
+        )
+
+        if conf <= threshold:
+
+            pred_name = face_names.get(
+                prediction,
+                "Not identified"
+            )
+
+            if pred_name != "Not identified":
+                nome_identificado = pred_name
+
+        else:
+
+            pred_name = "Not identified"
+
+        texto = f"{pred_name} -> {conf:.2f}"
+
+        cor = (
+            (0, 255, 0)
+            if pred_name != "Not identified"
+            else (0, 0, 255)
+        )
+
+        cv2.rectangle(
+            frame,
+            (start_x, start_y),
+            (end_x, end_y),
+            cor,
+            2
+        )
+
+        cv2.putText(
+            frame,
+            texto,
+            (start_x, max(20, start_y - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            cor,
+            2
+        )
+
+    return frame, nome_identificado
 
 
-network = cv2.dnn.readNetFromCaffe("deploy.prototxt.txt", "res10_300x300_ssd_iter_140000.caffemodel")
+# ==========================================
+# CARREGAR DETECTOR SSD
+# ==========================================
 
-# video capture object
+network = cv2.dnn.readNetFromCaffe(
+    os.path.join(BASE_DIR, "deploy.prototxt.txt"),
+    os.path.join(
+        BASE_DIR,
+        "res10_300x300_ssd_iter_140000.caffemodel"
+    )
+)
+
+
+# ==========================================
+# INICIAR CAMERA
+# ==========================================
+
 cam = cv2.VideoCapture(0)
 
 if not cam.isOpened():
-    print("Erro: não foi possível acessar a webcam.")
+
+    print("Erro: nao foi possivel acessar a webcam.")
+
     sys.exit()
 
-# loop over every frame of the video stream
-while(True):
+
+print("Reconhecimento facial iniciado.")
+print("Pressione Q para registrar e sair.")
+
+
+# ==========================================
+# LOOP PRINCIPAL
+# ==========================================
+
+ultimo_nome = None
+
+while True:
+
     ret, frame = cam.read()
 
-    # resize only if a max_width is specified
-    if max_width is not None:
-        video_width, video_height = resize_video(frame.shape[1], frame.shape[0], max_width)
-        frame = cv2.resize(frame, (video_width, video_height))
-
-    processed_frame,pred_name = recognize_faces(network, face_classifier, frame, face_names, threshold)
-
-    cv2.imshow("Recognizing faces", processed_frame)
-
-    if cv2.waitKey(1) == ord('q'):
-        grava(pred_name )
+    if not ret:
+        print("Erro ao capturar imagem.")
         break
 
-print ("Finished!")
+    if max_width is not None:
+
+        video_width, video_height = resize_video(
+            frame.shape[1],
+            frame.shape[0],
+            max_width
+        )
+
+        frame = cv2.resize(
+            frame,
+            (video_width, video_height)
+        )
+
+    processed_frame, nome_identificado = recognize_faces(
+        network,
+        face_classifier,
+        frame,
+        face_names,
+        threshold
+    )
+
+    if nome_identificado is not None:
+
+        ultimo_nome = nome_identificado
+
+    cv2.imshow(
+        "Recognizing Faces",
+        processed_frame
+    )
+
+    tecla = cv2.waitKey(1) & 0xFF
+
+    if tecla == ord("q"):
+
+        if ultimo_nome is not None:
+
+            grava(ultimo_nome)
+
+        else:
+
+            print("Nenhuma pessoa identificada para registrar.")
+
+        break
+
+
+print("Finished!")
+
 cam.release()
 cv2.destroyAllWindows()
